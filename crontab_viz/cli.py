@@ -1,14 +1,16 @@
-"""Command-line interface for crontab-viz."""
+"""CLI entry point for crontab-viz."""
 
 import argparse
 import sys
-from datetime import datetime
 
 from .parser import parse, ParseError
-from .timeline import next_occurrences, render_timeline
+from .timeline import render_timeline
 from .formatter import describe
-from .export import export
 from .validator import validate
+from .export import export
+from .diff import diff
+from .history import record
+from .interactive import print_history, pick_from_history
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,90 +18,104 @@ def build_parser() -> argparse.ArgumentParser:
         prog="crontab-viz",
         description="Parse and visualise crontab expressions.",
     )
-    p.add_argument("expression", nargs="?", help="Crontab expression (quoted).")
-    p.add_argument(
-        "-n", "--count",
-        type=int, default=10,
-        metavar="N",
-        help="Number of upcoming occurrences to show (default: 10).",
-    )
-    p.add_argument(
-        "--from",
-        dest="start",
-        default=None,
-        metavar="YYYY-MM-DDTHH:MM",
-        help="Start datetime for timeline (default: now).",
-    )
-    p.add_argument(
-        "--format",
-        dest="fmt",
-        choices=["timeline", "json", "csv"],
-        default="timeline",
-        help="Output format (default: timeline).",
-    )
-    p.add_argument(
-        "--no-color",
-        action="store_true",
-        help="Disable ANSI colour output.",
-    )
-    p.add_argument(
-        "--validate",
-        action="store_true",
-        help="Validate the expression and exit without rendering.",
-    )
+    sub = p.add_subparsers(dest="command")
+
+    show = sub.add_parser("show", help="Show timeline for an expression")
+    show.add_argument("expression", nargs="+", help="Cron expression (quoted)")
+    show.add_argument("-n", "--count", type=int, default=10, help="Number of occurrences")
+    show.add_argument("--no-color", action="store_true")
+
+    desc = sub.add_parser("describe", help="Human-readable description")
+    desc.add_argument("expression", nargs="+")
+
+    val = sub.add_parser("validate", help="Validate a cron expression")
+    val.add_argument("expression", nargs="+")
+
+    exp = sub.add_parser("export", help="Export occurrences to JSON or CSV")
+    exp.add_argument("expression", nargs="+")
+    exp.add_argument("-f", "--format", choices=["json", "csv"], default="json")
+    exp.add_argument("-n", "--count", type=int, default=10)
+
+    dif = sub.add_parser("diff", help="Compare two cron expressions")
+    dif.add_argument("expression_a")
+    dif.add_argument("expression_b")
+
+    sub.add_parser("history", help="Show previously used expressions")
+
+    pick = sub.add_parser("pick", help="Interactively pick from history")
+    pick.add_argument("-n", "--count", type=int, default=10)
+
     return p
 
 
-def main(argv=None) -> int:  # noqa: C901
+def _join(parts):
+    return " ".join(parts)
+
+
+def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.expression is None:
-        parser.print_help()
-        return 0
-
-    if args.no_color:
-        from . import colors
-        colors.disable()
-
-    # --- validate mode ---
-    if args.validate:
-        result = validate(args.expression)
-        if result.valid:
-            print("✓ Expression is valid.")
-            for w in result.warnings:
-                print(f"  warning: {w}", file=sys.stderr)
-            return 0
-        else:
-            print("✗ Expression is invalid:", file=sys.stderr)
-            for e in result.errors:
-                print(f"  {e}", file=sys.stderr)
-            return 1
-
-    try:
-        cron = parse(args.expression)
-    except ParseError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
-    start = datetime.now()
-    if args.start:
+    if args.command == "show":
+        expr = _join(args.expression)
         try:
-            start = datetime.fromisoformat(args.start)
-        except ValueError:
-            print(f"Error: invalid --from datetime '{args.start}'", file=sys.stderr)
-            return 1
+            cron = parse(expr)
+        except ParseError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        record(expr)
+        print(render_timeline(cron, count=args.count))
 
-    occurrences = next_occurrences(cron, count=args.count, start=start)
-
-    if args.fmt == "timeline":
+    elif args.command == "describe":
+        expr = _join(args.expression)
+        try:
+            cron = parse(expr)
+        except ParseError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        record(expr)
         print(describe(cron))
-        print(render_timeline(occurrences, start=start))
+
+    elif args.command == "validate":
+        expr = _join(args.expression)
+        result = validate(expr)
+        if result:
+            print("Valid expression.")
+            if result.warnings:
+                for w in result.warnings:
+                    print(f"Warning: {w}")
+        else:
+            for e in result.errors:
+                print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    elif args.command == "export":
+        expr = _join(args.expression)
+        try:
+            cron = parse(expr)
+        except ParseError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        record(expr)
+        print(export(cron, fmt=args.format, count=args.count))
+
+    elif args.command == "diff":
+        try:
+            result = diff(args.expression_a, args.expression_b)
+        except ParseError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(result.summary())
+        sys.exit(0 if result.same else 1)
+
+    elif args.command == "history":
+        print_history()
+
+    elif args.command == "pick":
+        expr = pick_from_history()
+        if expr:
+            cron = parse(expr)
+            print(render_timeline(cron, count=args.count))
+
     else:
-        print(export(occurrences, fmt=args.fmt, expression=args.expression))
-
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+        parser.print_help()
