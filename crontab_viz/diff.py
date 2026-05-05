@@ -41,7 +41,19 @@ def _field_values(expr: CronExpression) -> List[frozenset]:
 
 
 def diff(expr_a: str, expr_b: str) -> DiffResult:
-    """Compare two cron expressions and return a DiffResult."""
+    """Compare two cron expressions and return a DiffResult.
+
+    Args:
+        expr_a: The first cron expression string.
+        expr_b: The second cron expression string.
+
+    Returns:
+        A DiffResult describing which fields changed and human-readable
+        descriptions of both expressions.
+
+    Raises:
+        ValueError: If either expression cannot be parsed.
+    """
     cron_a = parse(expr_a)
     cron_b = parse(expr_b)
 
