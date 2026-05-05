@@ -30,6 +30,16 @@ def _delta_to_words(delta: timedelta) -> str:
     return " and ".join(parts)
 
 
+def _plural(count: int, singular: str, plural: Optional[str] = None) -> str:
+    """Return *singular* or *plural* form based on *count*.
+
+    If *plural* is not provided, an ``'s'`` suffix is appended to *singular*.
+    """
+    if count == 1:
+        return singular
+    return plural if plural is not None else f"{singular}s"
+
+
 def next_run_summary(
     expression: str,
     now: Optional[datetime] = None,
@@ -63,7 +73,7 @@ def next_run_summary(
     if not occurrences:
         return "No upcoming occurrences found."
 
-    lines = [f"Next {len(occurrences)} run{'s' if len(occurrences) != 1 else ''}:"]
+    lines = [f"Next {len(occurrences)} {_plural(len(occurrences), 'run')}:"]
     for occ in occurrences:
         delta = occ - now
         when = occ.strftime("%Y-%m-%d %H:%M")
